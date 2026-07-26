@@ -1,0 +1,145 @@
+// ApexFit database schema
+// Run `npx prisma migrate dev` after setting DATABASE_URL in .env
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  name          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Biometric / recovery snapshot, refreshed by the wearable-sync job
+  hrvScore          Int      @default(0)
+  recoveryPercent   Int      @default(0)
+  streakDays        Int      @default(0)
+
+  // Macro targets, editable in onboarding / coach settings
+  proteinTargetG Int @default(150)
+  carbTargetG    Int @default(300)
+  fatTargetG     Int @default(70)
+
+  pantryItems     PantryItem[]
+  recipes         Recipe[]
+  workoutSessions WorkoutSession[]
+
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Pantry Items
+// ---------------------------------------------------------------------------
+model PantryItem {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name           String
+  proteinPer100g Float
+  carbsPer100g   Float    @default(0)
+  fatPer100g     Float    @default(0)
+  kcalPer100g    Float
+  selected       Boolean  @default(false)
+
+  createdAt      DateTime @default(now())
+
+  recipeIngredients RecipeIngredient[]
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Recipes (AI-generated, "macro-matched" to pantry selection)
+// ---------------------------------------------------------------------------
+model Recipe {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title       String
+  kcal        Int
+  proteinG    Int
+  carbsG      Int
+  fatG        Int
+  steps       String[] // ordered prep instructions
+  source      RecipeSource @default(AI_GENERATED)
+
+  createdAt   DateTime @default(now())
+
+  ingredients RecipeIngredient[]
+
+  @@index([userId])
+}
+
+model RecipeIngredient {
+  id           String     @id @default(cuid())
+  recipeId     String
+  recipe       Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  pantryItemId String
+  pantryItem   PantryItem @relation(fields: [pantryItemId], references: [id], onDelete: Cascade)
+  quantityG    Float
+
+  @@unique([recipeId, pantryItemId])
+}
+
+enum RecipeSource {
+  AI_GENERATED
+  USER_SAVED
+}
+
+// ---------------------------------------------------------------------------
+// Workout Sessions (pose-tracked)
+// ---------------------------------------------------------------------------
+model WorkoutSession {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  exerciseName       String
+  startedAt          DateTime @default(now())
+  endedAt            DateTime?
+  avgFormQualityPct  Int?
+  avgFps             Int?
+  projectedMassGainKg Float   @default(0)
+
+  poseLogs           PoseLog[]
+  muscleActivations  MuscleActivation[]
+
+  @@index([userId])
+}
+
+model PoseLog {
+  id               String         @id @default(cuid())
+  sessionId        String
+  session          WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  capturedAt       DateTime       @default(now())
+  keypoints        Json           // serialized PoseKeypoint[] snapshot
+  formQualityPct   Int
+  fps              Int
+  coachFeedback    String?
+
+  @@index([sessionId])
+}
+
+model MuscleActivation {
+  id         String         @id @default(cuid())
+  sessionId  String
+  session    WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  muscleGroup String        // e.g. "quads", "glutes"
+  intensity   Float         // 0-1
+
+  @@index([sessionId])
+}
